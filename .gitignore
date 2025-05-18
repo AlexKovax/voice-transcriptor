@@ -1,0 +1,113 @@
+# Environnements virtuels
+venv/
+ENV/
+.env
+.venv
+
+# Fichiers Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Fichiers de configuration
+.env
+.env.local
+.env.*.local
+
+# Fichiers de cache et logs
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Fichiers temporaires
+*.swp
+*.bak
+*~
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers audio temporaires
+*.wav
+*.mp3
+*.ogg
+
+# Fichiers de développement
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# Fichiers de configuration locaux
+*.local
+
+# Fichiers de déploiement
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.manifest
+*.spec
+
+# Fichiers de test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Fichiers de débogage
+*.log
+
+# Fichiers de configuration personnalisés
+config.ini
+config.yaml
+config.yml
+
+# Fichiers de données
+data/
+*.db
+*.sqlite3
+
+# Fichiers de build et distribution
+build/
+dist/
+*.egg-info/
+
+# Fichiers spécifiques à PyCharm
+.idea/
+*.iml
+
+# Fichiers spécifiques à VS Code
+.vscode/
+*.code-workspace
+
+# Fichiers spécifiques à Jupyter Notebook
+.ipynb_checkpoints
+
+# Fichiers de cache Python
+.python-version
+
+# Fichiers de configuration de l'éditeur
+.editorconfig
+
+# Fichiers de configuration de pre-commit
+.pre-commit-config.yaml
