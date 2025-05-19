@@ -3,14 +3,16 @@ import os
 import tempfile
 import time
 import json
+import datetime
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
+from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, 
                            QVBoxLayout, QWidget, QLabel, QMessageBox,
-                           QHBoxLayout, QProgressBar)
+                           QHBoxLayout, QProgressBar, QSizePolicy)
 from PyQt6.QtCore import QTimer, Qt, QSize, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QMovie
+from PyQt6.QtGui import QMovie, QFont
 import openai
 import pyperclip
 
@@ -22,13 +24,21 @@ class AudioRecorder(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Enregistreur Vocal")
-        self.setFixedSize(350, 200)
+        self.setFixedSize(400, 250)  # Augmenté pour accommoder le chemin du fichier
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f5f5f5;
             }
             QLabel {
                 color: #333;
+            }
+            #filePathLabel {
+                font-size: 10px;
+                color: #666;
+                background-color: #f0f0f0;
+                padding: 4px;
+                border-radius: 3px;
+                margin-top: 10px;
             }
         """)
         
@@ -38,6 +48,13 @@ class AudioRecorder(QMainWindow):
         self.recording = False
         self.audio_frames = []
         self.start_time = 0
+        
+        # Dossier de sauvegarde des enregistrements
+        self.recordings_dir = Path.home() / "VoiceRecordings"
+        self.recordings_dir.mkdir(exist_ok=True)
+        
+        # Chemin du fichier d'enregistrement actuel
+        self.current_recording_path = None
         
         # Configuration de l'interface
         self.setup_ui()
@@ -119,9 +136,17 @@ class AudioRecorder(QMainWindow):
         button_layout.addWidget(self.finish_btn)
         button_layout.addWidget(self.cancel_btn)
         
+        # Label pour afficher le chemin du fichier
+        self.file_path_label = QLabel()
+        self.file_path_label.setObjectName("filePathLabel")
+        self.file_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.file_path_label.setWordWrap(True)
+        self.file_path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
         # Ajout des widgets au layout principal
         layout.addWidget(self.time_label, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.button_container, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.file_path_label, alignment=Qt.AlignmentFlag.AlignCenter)
         
         # Widget de chargement (caché par défaut)
         self.loading_widget = QWidget()
@@ -166,6 +191,11 @@ class AudioRecorder(QMainWindow):
         self.recording = True
         self.audio_frames = []
         self.start_time = time.time()
+        
+        # Créer un nom de fichier basé sur la date et l'heure
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_recording_path = self.recordings_dir / f"recording_{timestamp}.wav"
+        self.file_path_label.setText(f"Enregistrement en cours : {self.current_recording_path}")
         
         # Démarrer le flux audio
         self.stream = sd.InputStream(
@@ -225,10 +255,21 @@ class AudioRecorder(QMainWindow):
         def process_audio():
             tmp_file = None
             try:
-                # Sauvegarder dans un fichier temporaire
+                # Sauvegarder dans un fichier temporaire pour l'API
                 tmp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                 audio_data = np.concatenate(self.audio_frames, axis=0)
+                
+                # Sauvegarder dans le fichier temporaire pour l'API
                 sf.write(tmp_file.name, audio_data, self.sample_rate)
+                
+                # Sauvegarder une copie dans le dossier des enregistrements
+                if self.current_recording_path:
+                    try:
+                        sf.write(str(self.current_recording_path), audio_data, self.sample_rate)
+                        self.file_path_label.setText(f"Enregistrement sauvegardé :\n{self.current_recording_path}")
+                    except Exception as e:
+                        print(f"Erreur lors de la sauvegarde de l'enregistrement : {e}")
+                        self.file_path_label.setText(f"Erreur de sauvegarde, vérifiez les permissions :\n{self.recordings_dir}")
                 
                 # Envoyer à l'API OpenAI
                 with open(tmp_file.name, "rb") as audio_file:
@@ -242,17 +283,23 @@ class AudioRecorder(QMainWindow):
                 pyperclip.copy(transcription)
                 
                 # Afficher le message de succès dans le thread principal
-                self.show_success_signal.emit("Transcription terminée !")
+                success_msg = "Transcription terminée !"
+                if self.current_recording_path:
+                    success_msg += f"\nL'audio est sauvegardé ici :\n{self.current_recording_path}"
+                self.show_success_signal.emit(success_msg)
                 
             except Exception as e:
-                self.show_error_signal.emit(f"Erreur : {str(e)}")
+                error_msg = f"Erreur lors de la transcription : {str(e)}"
+                if self.current_recording_path:
+                    error_msg += f"\n\nL'enregistrement audio a été sauvegardé ici :\n{self.current_recording_path}"
+                self.show_error_signal.emit(error_msg)
             finally:
                 # Nettoyer le fichier temporaire
                 if tmp_file and os.path.exists(tmp_file.name):
                     try:
                         os.unlink(tmp_file.name)
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Erreur lors de la suppression du fichier temporaire : {e}")
         
         # Démarrer le traitement dans un thread séparé
         self.worker_thread = Thread(target=process_audio, daemon=True)
