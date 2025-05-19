@@ -2,7 +2,25 @@
 
 Une application légère et efficace pour enregistrer de l'audio et le transcrire en temps réel en utilisant l'API OpenAI. Parfaite pour les notes vocales, les interviews ou la dictée.
 
-![Capture d'écran](https://via.placeholder.com/800x500.png?text=Voice+Transcriber+Demo)
+
+## 📚 Table des matières
+
+- [Fonctionnalités ✨](#-fonctionnalités)
+- [Prérequis 📋](#-prérequis)
+- [Installation rapide 🚀](#-installation-rapide)
+- [Utilisation 🎯](#-utilisation)
+  - [Lancement manuel](#lancement-manuel)
+  - [Configuration du raccourci clavier](#configuration-du-raccourci-clavier-ubuntu)
+  - [Utilisation de l'application](#utilisation-de-lapplication)
+  - [Options supplémentaires](#options-supplémentaires)
+- [Configuration ⚙️](#%EF%B8%8F-configuration)
+  - [Variables d'environnement](#variables-denvironnement)
+  - [Options de personnalisation](#options-de-personnalisation)
+- [Dépannage 🛠️](#-dépannage)
+- [Sécurité 🔒](#-sécurité)
+- [Contribution 🤝](#-contribution)
+- [Licence 📄](#-licence)
+- [Création de l'application](#création-de-lapplication)
 
 ## ✨ Fonctionnalités
 
@@ -54,23 +72,77 @@ Une application légère et efficace pour enregistrer de l'audio et le transcrir
 
 ## 🎯 Utilisation
 
-1. **Lancer l'application** :
+### Lancement manuel
+
+```bash
+python src/main.py
+```
+
+### Configuration du raccourci clavier (Ubuntu)
+
+Pour un accès rapide, configurez un raccourci clavier :
+
+1. **Rendre le script de lancement exécutable** :
    ```bash
-   python src/main.py
+   chmod +x bin/launch-voice-transcriptor.sh
    ```
 
-2. **Enregistrement** :
+2. **Créer un raccourci clavier personnalisé** :
+   - Ouvrez les Paramètres système (Settings)
+   - Allez dans "Clavier" (Keyboard)
+   - Faites défiler vers le bas et cliquez sur "Raccourcis personnalisés" (Custom Shortcuts)
+   - Cliquez sur le bouton "+" en bas
+   - Remplissez les champs :
+     - Nom : `Voice Transcriber`
+     - Commande : `/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh`
+   - Cliquez sur "Appliquer" (Apply)
+   - Cliquez sur "Désactivé" (Disabled) à droite du nouveau raccourci
+   - Appuyez sur la combinaison de touches de votre choix (par exemple, `Ctrl+Alt+V`)
+
+### Utilisation de l'application
+
+1. **Démarrage** :
    - L'application démarre automatiquement l'enregistrement
    - Parlez clairement dans votre microphone
 
-3. **Actions disponibles** :
+2. **Actions disponibles** :
    - 🟢 **Terminer** : Arrête l'enregistrement et lance la transcription
    - 🔴 **Annuler** : Annule l'enregistrement et quitte
 
-4. **Après la transcription** :
+3. **Après la transcription** :
    - Le texte est automatiquement copié dans le presse-papier
    - Un message de confirmation s'affiche
    - L'application se ferme automatiquement après 1 seconde
+
+### Options supplémentaires
+
+#### Créer un raccourci sur le bureau
+
+```bash
+cat > ~/Desktop/Voice-Transcriber.desktop << 'EOL'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Voice Transcriber
+Comment=Lance l'application de transcription vocale
+Exec=/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh
+Icon=audio-input-microphone
+Terminal=false
+Categories=Audio;Utility;
+EOL
+
+chmod +x ~/Desktop/Voice-Transcriber.desktop
+```
+
+#### Démarrer automatiquement au démarrage
+
+1. Ouvrez "Applications au démarrage" (Startup Applications)
+2. Cliquez sur "Ajouter" (Add)
+3. Remplissez les champs :
+   - Nom : `Voice Transcriber`
+   - Commande : `/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh`
+   - Commentaire : "Application de transcription vocale"
+4. Cliquez sur "Ajouter" (Add)
 
 ## ⚙️ Configuration
 
@@ -170,3 +242,7 @@ Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de
 ## Licence
 
 Ce projet est sous licence MIT.
+
+## Création de l'application
+
+Cette application a été entièrement créée avec l'assistant AI Windsurf. Vous pouvez retrouvez les prompts dans PROMPTS.md
