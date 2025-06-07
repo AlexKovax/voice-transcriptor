@@ -36,6 +36,7 @@ Une application légère et efficace pour enregistrer de l'audio et le transcrir
 - Python 3.8 ou supérieur
 - Compte [OpenAI](https://platform.openai.com/) avec clé API valide
 - Système d'exploitation : Ubuntu (testé sur 20.04/22.04)
+  - Pour les environnements de bureau sur Ubuntu, la bibliothèque `libxcb-cursor0` est nécessaire pour l'interface graphique. Installez-la avec : `sudo apt install libxcb-cursor0`
 - Accès à un microphone fonctionnel
 - Connexion Internet (pour l'API OpenAI)
 
@@ -43,7 +44,7 @@ Une application légère et efficace pour enregistrer de l'audio et le transcrir
 
 1. **Cloner le dépôt** :
    ```bash
-   git clone https://github.com/votre-utilisateur/voice-transcriptor.git
+   git clone https://github.com/alexkovax/voice-transcriptor.git
    cd voice-transcriptor
    ```
 
@@ -58,6 +59,12 @@ Une application légère et efficace pour enregistrer de l'audio et le transcrir
 3. **Installer les dépendances** :
    ```bash
    pip install -r requirements.txt
+   ```
+
+   **Note pour les utilisateurs Ubuntu (Bureau) :** Si vous rencontrez des problèmes avec Qt (par exemple, une erreur "xcb platform plugin"), assurez-vous d'avoir installé `libxcb-cursor0`:
+   ```bash
+   sudo apt update
+   sudo apt install libxcb-cursor0
    ```
 
 4. **Configurer la clé API OpenAI** :
