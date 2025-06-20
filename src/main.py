@@ -15,6 +15,7 @@ from PyQt6.QtCore import QTimer, Qt, QSize, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QMovie, QFont
 import openai
 import pyperclip
+from pydub import AudioSegment
 
 class AudioRecorder(QMainWindow):
     # Définir des signaux personnalisés
@@ -253,14 +254,15 @@ class AudioRecorder(QMainWindow):
         from threading import Thread
         
         def process_audio():
-            tmp_file = None
+            tmp_wav_file = None
+            tmp_mp3_file = None
             try:
-                # Sauvegarder dans un fichier temporaire pour l'API
-                tmp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                # Sauvegarder dans un fichier temporaire WAV
+                tmp_wav_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                 audio_data = np.concatenate(self.audio_frames, axis=0)
                 
-                # Sauvegarder dans le fichier temporaire pour l'API
-                sf.write(tmp_file.name, audio_data, self.sample_rate)
+                # Sauvegarder dans le fichier temporaire WAV
+                sf.write(tmp_wav_file.name, audio_data, self.sample_rate)
                 
                 # Sauvegarder une copie dans le dossier des enregistrements
                 if self.current_recording_path:
@@ -271,8 +273,21 @@ class AudioRecorder(QMainWindow):
                         print(f"Erreur lors de la sauvegarde de l'enregistrement : {e}")
                         self.file_path_label.setText(f"Erreur de sauvegarde, vérifiez les permissions :\n{self.recordings_dir}")
                 
-                # Envoyer à l'API OpenAI
-                with open(tmp_file.name, "rb") as audio_file:
+                # Convertir WAV en MP3 pour réduire la taille
+                tmp_mp3_file = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+                audio = AudioSegment.from_wav(tmp_wav_file.name)
+                audio.export(tmp_mp3_file.name, format="mp3", bitrate="128k")
+                
+                # Vérifier la taille du fichier MP3
+                mp3_size_mb = os.path.getsize(tmp_mp3_file.name) / (1024 * 1024)  # Taille en Mo
+                warning_message = ""
+                
+                if mp3_size_mb > 25:
+                    warning_message = f"⚠️ ATTENTION: Le fichier audio fait {mp3_size_mb:.1f} Mo et dépasse la limite de 25 Mo de l'API OpenAI. La transcription pourrait échouer."
+                    print(warning_message)
+                
+                # Envoyer à l'API OpenAI (utiliser le MP3 au lieu du WAV)
+                with open(tmp_mp3_file.name, "rb") as audio_file:
                     response = openai.audio.transcriptions.create(
                         model="gpt-4o-transcribe",
                         file=audio_file
@@ -284,6 +299,8 @@ class AudioRecorder(QMainWindow):
                 
                 # Afficher le message de succès dans le thread principal
                 success_msg = "Transcription terminée !"
+                if warning_message:
+                    success_msg += f"\n{warning_message}"
                 if self.current_recording_path:
                     success_msg += f"\nL'audio est sauvegardé ici :\n{self.current_recording_path}"
                 self.show_success_signal.emit(success_msg)
@@ -294,12 +311,13 @@ class AudioRecorder(QMainWindow):
                     error_msg += f"\n\nL'enregistrement audio a été sauvegardé ici :\n{self.current_recording_path}"
                 self.show_error_signal.emit(error_msg)
             finally:
-                # Nettoyer le fichier temporaire
-                if tmp_file and os.path.exists(tmp_file.name):
-                    try:
-                        os.unlink(tmp_file.name)
-                    except Exception as e:
-                        print(f"Erreur lors de la suppression du fichier temporaire : {e}")
+                # Nettoyer les fichiers temporaires
+                for temp_file in [tmp_wav_file, tmp_mp3_file]:
+                    if temp_file and os.path.exists(temp_file.name):
+                        try:
+                            os.unlink(temp_file.name)
+                        except Exception as e:
+                            print(f"Erreur lors de la suppression du fichier temporaire : {e}")
         
         # Démarrer le traitement dans un thread séparé
         self.worker_thread = Thread(target=process_audio, daemon=True)

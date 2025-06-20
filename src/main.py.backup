@@ -1,0 +1,637 @@
+import sys
+import os
+import tempfile
+import time
+import json
+import datetime
+import argparse
+import subprocess
+import sounddevice as sd
+import soundfile as sf
+import numpy as np
+from pathlib import Path
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, 
+                           QVBoxLayout, QWidget, QLabel, QMessageBox,
+                           QHBoxLayout, QProgressBar, QSizePolicy)
+from PyQt6.QtCore import QTimer, Qt, QSize, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QMovie, QFont
+import openai
+import pyperclip
+
+class AudioRecorder(QMainWindow):
+    # Définir des signaux personnalisés
+    show_success_signal = pyqtSignal(str)
+    show_error_signal = pyqtSignal(str)
+    
+    def __init__(self, record_both=False, display_output=False):
+        super().__init__()
+        self.setWindowTitle("Enregistreur Vocal")
+        self.setFixedSize(400, 250)  # Augmenté pour accommoder le chemin du fichier
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+            QLabel {
+                color: #333;
+            }
+            #filePathLabel {
+                font-size: 10px;
+                color: #666;
+                background-color: #f0f0f0;
+                padding: 4px;
+                border-radius: 3px;
+                margin-top: 10px;
+            }
+        """)
+        
+        # Configuration audio
+        self.sample_rate = 44100
+        self.channels = 1
+        self.recording = False
+        self.audio_frames = []
+        self.start_time = 0
+        self.record_both = record_both
+        self.display_output = display_output
+        
+        # Variables pour l'enregistrement dual
+        self.mic_frames = []
+        self.system_frames = []
+        self.mic_stream = None
+        self.system_stream = None
+        self.system_device = None
+        
+        # Dossier de sauvegarde des enregistrements
+        self.recordings_dir = Path.home() / "VoiceRecordings"
+        self.recordings_dir.mkdir(exist_ok=True)
+        
+        # Chemin du fichier d'enregistrement actuel
+        self.current_recording_path = None
+        
+        # Initialiser le périphérique système si nécessaire
+        if self.record_both:
+            self.system_device = self.get_system_monitor_device()
+            if not self.system_device:
+                QMessageBox.warning(
+                    None,
+                    "Avertissement",
+                    "Impossible de détecter le périphérique de sortie système. Seul le microphone sera enregistré."
+                )
+                self.record_both = False
+        
+        # Configuration de l'interface
+        self.setup_ui()
+        
+        # Configuration du timer pour le chronomètre
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_timer)
+        
+        # Configuration d'OpenAI (à remplacer par votre clé API)
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        if not openai.api_key:
+            QMessageBox.critical(
+                self, 
+                "Erreur", 
+                "La clé API OpenAI n'a pas été trouvée. Veuillez définir la variable d'environnement OPENAI_API_KEY."
+            )
+            sys.exit(1)
+    
+    def get_system_monitor_device(self):
+        """Obtient le périphérique monitor du sink par défaut"""
+        try:
+            # Essayer d'abord l'approche PulseAudio directe
+            result = subprocess.run(['pactl', 'get-default-sink'], 
+                              capture_output=True, text=True, check=True)
+            default_sink = result.stdout.strip()
+            monitor_device = f"{default_sink}.monitor"
+            
+            # Afficher les périphériques pour le débogage
+            print("Périphériques audio disponibles:")
+            
+            # Vérifier les périphériques sounddevice disponibles
+            devices = sd.query_devices()
+            
+            for i, device in enumerate(devices):
+                print(f"  {i}: {device['name']} (inputs: {device['max_input_channels']}, outputs: {device['max_output_channels']})")
+            
+            # Chercher le périphérique monitor exact dans sounddevice
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    if monitor_device in device['name'] or default_sink in device['name']:
+                        print(f"Utilisation du périphérique monitor: {device['name']}")
+                        return i
+            
+            # Si pas trouvé, chercher des périphériques avec des mots-clés
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    name = device['name'].lower()
+                    if any(term in name for term in ['monitor', 'loopback', 'output']):
+                        print(f"Utilisation du périphérique système par mot-clé: {device['name']}")
+                        return i
+            
+            # Dernier recours: utiliser pipewire ou default
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    name = device['name'].lower()
+                    if name in ['pipewire', 'default'] and device['max_input_channels'] >= 2:
+                        print(f"Utilisation du périphérique système par défaut: {device['name']}")
+                        return i
+            
+            print("Aucun périphérique système trouvé")
+            return None
+                
+        except Exception as e:
+            print(f"Erreur lors de la détection du périphérique système: {e}")
+            return None
+
+    def setup_ui(self):
+        # Widget principal
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(20, 20, 20, 20)
+        self.main_layout.setSpacing(20)
+        
+        # Conteneur pour le contenu principal (sera remplacé pendant le chargement)
+        self.content_widget = QWidget()
+        self.main_layout.addWidget(self.content_widget)
+        
+        # Layout pour le contenu principal
+        layout = QVBoxLayout(self.content_widget)
+        
+        # Affichage du temps
+        self.time_label = QLabel("00:00")
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.time_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        
+        # Conteneur pour les boutons
+        self.button_container = QWidget()
+        button_layout = QHBoxLayout(self.button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(10)
+        
+        # Boutons
+        self.finish_btn = QPushButton("Terminer")
+        self.finish_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #a5d6a7;
+            }
+        """)
+        self.finish_btn.clicked.connect(self.finish_recording)
+        
+        self.cancel_btn = QPushButton("Annuler")
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #ef9a9a;
+            }
+        """)
+        self.cancel_btn.clicked.connect(self.cancel_recording)
+        
+        # Ajout des boutons au layout
+        button_layout.addWidget(self.finish_btn)
+        button_layout.addWidget(self.cancel_btn)
+        
+        # Label pour afficher le chemin du fichier
+        self.file_path_label = QLabel()
+        self.file_path_label.setObjectName("filePathLabel")
+        self.file_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.file_path_label.setWordWrap(True)
+        self.file_path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        # Ajout des widgets au layout principal
+        layout.addWidget(self.time_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.button_container, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.file_path_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Widget de chargement (caché par défaut)
+        self.loading_widget = QWidget()
+        loading_layout = QVBoxLayout(self.loading_widget)
+        loading_layout.setContentsMargins(0, 0, 0, 0)
+        loading_layout.setSpacing(15)
+        
+        # Indicateur de chargement
+        self.loading_label = QLabel()
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setStyleSheet("font-size: 14px; color: #555;")
+        
+        # Barre de progression
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # Mode indéterminé
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background: #e0e0e0;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 2px;
+            }
+        """)
+        
+        loading_layout.addWidget(self.loading_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        loading_layout.addWidget(self.progress_bar)
+        
+        # Ajouter le widget de chargement au layout principal
+        self.main_layout.addWidget(self.loading_widget)
+        self.loading_widget.hide()
+        
+        # Définir le layout principal
+        main_widget.setLayout(self.main_layout)
+    
+    def start_recording(self):
+        """Démarre l'enregistrement audio"""
+        self.recording = True
+        self.audio_frames = []
+        self.mic_frames = []
+        self.system_frames = []
+        self.start_time = time.time()
+        
+        # Créer un nom de fichier basé sur la date et l'heure
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_recording_path = self.recordings_dir / f"recording_{timestamp}.wav"
+        
+        # Mettre à jour le label selon le mode d'enregistrement
+        if self.record_both:
+            self.file_path_label.setText(f"Enregistrement (Micro + Système) : {self.current_recording_path}")
+        else:
+            self.file_path_label.setText(f"Enregistrement (Micro) : {self.current_recording_path}")
+        
+        if self.record_both and self.system_device:
+            # Démarrer les deux flux audio
+            self.mic_stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                callback=self.mic_callback
+            )
+            
+            self.system_stream = sd.InputStream(
+                device=self.system_device,
+                samplerate=self.sample_rate,
+                channels=2,  # Stéréo pour l'audio système
+                callback=self.system_callback
+            )
+            
+            self.mic_stream.start()
+            self.system_stream.start()
+        else:
+            # Mode micro seul (comportement original)
+            self.stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                callback=self.audio_callback
+            )
+            self.stream.start()
+        
+        # Démarrer le timer
+        self.timer.start(100)  # Mise à jour toutes les 100ms
+        self.update_timer()
+
+    def mic_callback(self, indata, frames, time, status):
+        """Callback pour l'audio du microphone"""
+        if self.recording:
+            self.mic_frames.append(indata.copy())
+
+    def system_callback(self, indata, frames, time, status):
+        """Callback pour l'audio du système"""
+        if self.recording:
+            self.system_frames.append(indata.copy())
+
+    def audio_callback(self, indata, frames, time, status):
+        """Callback appelé à chaque nouveau bloc audio (mode micro seul)"""
+        if self.recording:
+            self.audio_frames.append(indata.copy())
+
+    def update_timer(self):
+        """Met à jour l'affichage du chronomètre"""
+        if self.recording:
+            elapsed = int(time.time() - self.start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            self.time_label.setText(f"{minutes:02d}:{seconds:02d}")
+
+    def show_loading(self, message):
+        """Affiche l'écran de chargement avec un message"""
+        self.content_widget.hide()
+        self.loading_label.setText(message)
+        self.loading_label.setStyleSheet("font-size: 14px; color: #555;")
+        self.progress_bar.show()
+        self.loading_widget.show()
+
+    def show_success(self, message, close_delay=1000):
+        """Affiche un message de succès et ferme l'application après un délai"""
+        self.loading_label.setText(message)
+        self.loading_label.setStyleSheet("color: #4CAF50; font-size: 16px; font-weight: bold;")
+        self.progress_bar.hide()
+        QTimer.singleShot(close_delay, self.close)
+
+    def show_error(self, error_message):
+        """Affiche un message d'erreur et ferme l'application"""
+        self.loading_label.setText(error_message)
+        self.loading_label.setStyleSheet("color: #f44336; font-size: 16px; font-weight: bold;")
+        self.progress_bar.hide()
+        QTimer.singleShot(1000, self.close)
+
+    def finish_recording(self):
+        """Termine l'enregistrement et envoie à l'API OpenAI"""
+        if not self.recording:
+            return
+            
+        self.stop_recording()
+        
+        # Désactiver les boutons et afficher le chargement
+        self.finish_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.show_loading("Transcription en cours...")
+        
+        # Utiliser un thread séparé pour éviter de bloquer l'interface
+        from threading import Thread
+        
+        def process_audio():
+            tmp_file = None
+            try:
+                # Sauvegarder dans un fichier temporaire pour l'API
+                tmp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                
+                if self.record_both:
+                    # Mixer les deux sources audio
+                    self.mix_and_save_audio(tmp_file.name)
+                    # Lire les données pour la sauvegarde dans le dossier
+                    audio_data, _ = sf.read(tmp_file.name)
+                else:
+                    # Mode micro seul
+                    if self.audio_frames:
+                        audio_data = np.concatenate(self.audio_frames, axis=0)
+                        sf.write(tmp_file.name, audio_data, self.sample_rate)
+                    else:
+                        audio_data = None
+                
+                # Sauvegarder une copie dans le dossier des enregistrements
+                if self.current_recording_path and audio_data is not None:
+                    try:
+                        sf.write(str(self.current_recording_path), audio_data, self.sample_rate)
+                        self.file_path_label.setText(f"Enregistrement sauvegardé :\n{self.current_recording_path}")
+                    except Exception as e:
+                        print(f"Erreur lors de la sauvegarde de l'enregistrement : {e}")
+                        self.file_path_label.setText(f"Erreur de sauvegarde, vérifiez les permissions :\n{self.recordings_dir}")
+                
+                # Envoyer à l'API OpenAI
+                with open(tmp_file.name, "rb") as audio_file:
+                    response = openai.audio.transcriptions.create(
+                        model="gpt-4o-transcribe",
+                        file=audio_file
+                    )
+                
+                # Copier le texte dans le presse-papier
+                transcription = response.text
+                pyperclip.copy(transcription)
+                
+                # Afficher le message de succès dans le thread principal
+                success_msg = "Transcription terminée !"
+                if self.current_recording_path:
+                    success_msg += f"\nL'audio est sauvegardé ici :\n{self.current_recording_path}"
+                if self.display_output:
+                    print(transcription)
+                self.show_success_signal.emit(success_msg)
+                
+            except Exception as e:
+                error_msg = f"Erreur lors de la transcription : {str(e)}"
+                if self.current_recording_path:
+                    error_msg += f"\n\nL'enregistrement audio a été sauvegardé ici :\n{self.current_recording_path}"
+                self.show_error_signal.emit(error_msg)
+            finally:
+                # Nettoyer le fichier temporaire
+                if tmp_file and os.path.exists(tmp_file.name):
+                    try:
+                        os.unlink(tmp_file.name)
+                    except Exception as e:
+                        print(f"Erreur lors de la suppression du fichier temporaire : {e}")
+        
+        # Démarrer le traitement dans un thread séparé
+        self.worker_thread = Thread(target=process_audio, daemon=True)
+        self.worker_thread.start()
+        
+        # Connecter les signaux si ce n'est pas déjà fait
+        if not hasattr(self, '_signals_connected'):
+            self.show_success_signal.connect(self.show_success)
+            self.show_error_signal.connect(self.show_error)
+            self._signals_connected = True
+
+    def cancel_recording(self):
+        """Annule l'enregistrement et quitte l'application"""
+        if self.recording:
+            self.stop_recording()
+        self.close()
+
+    def stop_recording(self):
+        """Arrête l'enregistrement audio"""
+        self.recording = False
+        self.timer.stop()
+        
+        if self.record_both and self.system_device:
+            # Arrêter les deux flux
+            if self.mic_stream:
+                self.mic_stream.stop()
+                self.mic_stream.close()
+            if self.system_stream:
+                self.system_stream.stop()
+                self.system_stream.close()
+        else:
+            # Mode micro seul
+        try:
+            # Sauvegarder dans un fichier temporaire pour l'API
+            tmp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                
+            if self.record_both:
+                # Mixer les deux sources audio
+                self.mix_and_save_audio(tmp_file.name)
+                # Lire les données pour la sauvegarde dans le dossier
+                audio_data, _ = sf.read(tmp_file.name)
+            else:
+                # Mode micro seul
+                if self.audio_frames:
+                    audio_data = np.concatenate(self.audio_frames, axis=0)
+                    sf.write(tmp_file.name, audio_data, self.sample_rate)
+                else:
+                    audio_data = None
+                
+            # Sauvegarder une copie dans le dossier des enregistrements
+            if self.current_recording_path and audio_data is not None:
+                try:
+                    sf.write(str(self.current_recording_path), audio_data, self.sample_rate)
+                    self.file_path_label.setText(f"Enregistrement sauvegardé :\n{self.current_recording_path}")
+                except Exception as e:
+                    print(f"Erreur lors de la sauvegarde de l'enregistrement : {e}")
+                    self.file_path_label.setText(f"Erreur de sauvegarde, vérifiez les permissions :\n{self.recordings_dir}")
+                
+            # Envoyer à l'API OpenAI
+            with open(tmp_file.name, "rb") as audio_file:
+                response = openai.audio.transcriptions.create(
+                    model="gpt-4o-transcribe",
+                    file=audio_file
+                )
+            
+            # Copier le texte dans le presse-papier
+            transcription = response.text
+            pyperclip.copy(transcription)
+            
+            # Afficher le message de succès dans le thread principal
+            success_msg = "Transcription terminée !"
+            if self.current_recording_path:
+                success_msg += f"\nL'audio est sauvegardé ici :\n{self.current_recording_path}"
+            if self.display_output:
+                print(transcription)
+            self.show_success_signal.emit(success_msg)
+            
+        except Exception as e:
+            error_msg = f"Erreur lors de la transcription : {str(e)}"
+            if self.current_recording_path:
+                error_msg += f"\n\nL'enregistrement audio a été sauvegardé ici :\n{self.current_recording_path}"
+            self.show_error_signal.emit(error_msg)
+        finally:
+            # Nettoyer le fichier temporaire
+            if tmp_file and os.path.exists(tmp_file.name):
+                try:
+                    os.unlink(tmp_file.name)
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du fichier temporaire : {e}")
+        
+    # Démarrer le traitement dans un thread séparé
+    self.worker_thread = Thread(target=process_audio, daemon=True)
+    self.worker_thread.start()
+        
+    # Connecter les signaux si ce n'est pas déjà fait
+    if not hasattr(self, '_signals_connected'):
+        self.show_success_signal.connect(self.show_success)
+        self.show_error_signal.connect(self.show_error)
+        self._signals_connected = True
+
+def cancel_recording(self):
+    """Annule l'enregistrement et quitte l'application"""
+    if self.recording:
+        self.stop_recording()
+    self.close()
+
+def stop_recording(self):
+    """Arrête l'enregistrement audio"""
+    self.recording = False
+    self.timer.stop()
+        
+    if self.record_both and self.system_device:
+        # Arrêter les deux flux
+        if self.mic_stream:
+            self.mic_stream.stop()
+            self.mic_stream.close()
+        if self.system_stream:
+            self.system_stream.stop()
+            self.system_stream.close()
+    else:
+        # Mode micro seul
+        if hasattr(self, 'stream') and self.stream:
+            self.stream.stop()
+            self.stream.close()
+
+def mix_and_save_audio(self, output_file):
+    """Mixe l'audio du micro et du système puis sauvegarde"""
+    try:
+        # Convertir les frames en tableaux numpy
+        if self.mic_frames:
+            mic_data = np.concatenate(self.mic_frames, axis=0)
+        else:
+            mic_data = np.zeros((0, 1))
+        
+        if self.system_frames:
+            system_data = np.concatenate(self.system_frames, axis=0)
+            # Sauvegarder l'audio système séparément pour le débogage
+            debug_file = output_file.replace(".wav", "_system_only.wav")
+            sf.write(debug_file, system_data, self.sample_rate)
+            print(f"Audio système sauvegardé dans: {debug_file}")
+        else:
+            system_data = np.zeros((0, 1))
+        
+        # Vérifier si l'audio système est en stéréo et le convertir en mono si nécessaire
+        if len(system_data.shape) > 1 and system_data.shape[1] > 1:
+            print(f"Conversion de l'audio système stéréo en mono (forme originale: {system_data.shape})")
+            system_data_mono = np.mean(system_data, axis=1, keepdims=True)
+        else:
+            system_data_mono = system_data
+        
+        # Égaliser les longueurs
+        max_length = max(len(mic_data), len(system_data_mono))
+        if len(mic_data) < max_length:
+            mic_data = np.pad(mic_data, ((0, max_length - len(mic_data)), (0, 0)))
+        if len(system_data_mono) < max_length:
+            system_data_mono = np.pad(system_data_mono, ((0, max_length - len(system_data_mono)), (0, 0)))
+        
+        # Mixer les deux sources avec une pondération égale (50/50)
+        if max_length > 0:
+            mixed_data = (mic_data * 0.5 + system_data_mono * 0.5)  # Pondération égale
+            # Normaliser pour éviter la saturation
+            max_val = np.max(np.abs(mixed_data))
+            if max_val > 0:
+                mixed_data = mixed_data / max_val * 0.9  # Normalisation à 90% pour éviter la saturation
+        else:
+            mixed_data = np.zeros((0, 1))
+        
+        # Sauvegarder le fichier mixé
+        sf.write(output_file, mixed_data, self.sample_rate)
+        print(f"Audio mixé sauvegardé dans: {output_file}")
+        
+    except Exception as e:
+        print(f"Erreur lors du mixage audio: {e}")
+        # En cas d'erreur, sauvegarder au moins le micro si disponible
+        if self.mic_frames:
+            mic_data = np.concatenate(self.mic_frames, axis=0)
+            sf.write(output_file, mic_data, self.sample_rate)
+
+def closeEvent(self, event):
+    """Gère la fermeture de la fenêtre"""
+    self.stop_recording()
+    event.accept()
+
+def main():
+    # Parser les arguments de ligne de commande
+    parser = argparse.ArgumentParser(description="Enregistreur vocal avec transcription")
+    parser.add_argument('-b', '--both', action='store_true', 
+                       help='Enregistrer le microphone ET la sortie système')
+    parser.add_argument('-d', '--display', action='store_true', 
+                       help='Afficher la transcription sur stdout')
+    args = parser.parse_args()
+    
+    app = QApplication(sys.argv)
+    
+    # Vérifier si une clé API est définie
+    if not os.getenv("OPENAI_API_KEY"):
+        QMessageBox.critical(
+            None,
+            "Erreur de configuration",
+            "Veuillez définir la variable d'environnement OPENAI_API_KEY avec votre clé API OpenAI."
+        )
+        sys.exit(1)
+    
+    # Démarrer l'application avec le mode d'enregistrement approprié
+    recorder = AudioRecorder(record_both=args.both, display_output=args.display)
+    recorder.show()
+    recorder.start_recording()  # Démarrer l'enregistrement immédiatement
+    
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()

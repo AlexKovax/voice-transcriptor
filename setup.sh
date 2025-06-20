@@ -26,7 +26,7 @@ pip install -r requirements.txt
 # Installer les dépendances système nécessaires
 echo "Installation des dépendances système..."
 sudo apt update
-sudo apt install -y portaudio19-dev python3-dev
+sudo apt install -y portaudio19-dev python3-dev ffmpeg pulseaudio-utils
 
 # Demander la clé API OpenAI
 read -p "Veuillez entrer votre clé API OpenAI: " openai_key
