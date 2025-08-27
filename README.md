@@ -48,6 +48,20 @@ Une application légère et efficace pour enregistrer de l'audio et le transcrir
    cd voice-transcriptor
    ```
 
+2. **Lancer le script setup.sh pour une installation interactive** :
+   ```bash
+   sh setup.sh
+   ```
+
+
+## 🚀 Installation manuelle
+
+1. **Cloner le dépôt** :
+   ```bash
+   git clone https://github.com/alexkovax/voice-transcriptor.git
+   cd voice-transcriptor
+   ```
+
 2. **Créer et activer un environnement virtuel** :
    ```bash
    python -m venv venv
