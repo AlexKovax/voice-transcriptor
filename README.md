@@ -1,269 +1,182 @@
 # 🎤 Voice Transcriber
 
-Une application légère et efficace pour enregistrer de l'audio et le transcrire en temps réel en utilisant l'API OpenAI. Parfaite pour les notes vocales, les interviews ou la dictée.
-
-
-## 📚 Table des matières
-
-- [Fonctionnalités ✨](#-fonctionnalités)
-- [Prérequis 📋](#-prérequis)
-- [Installation rapide 🚀](#-installation-rapide)
-- [Utilisation 🎯](#-utilisation)
-  - [Lancement manuel](#lancement-manuel)
-  - [Configuration du raccourci clavier](#configuration-du-raccourci-clavier-ubuntu)
-  - [Utilisation de l'application](#utilisation-de-lapplication)
-  - [Options supplémentaires](#options-supplémentaires)
-- [Configuration ⚙️](#%EF%B8%8F-configuration)
-  - [Variables d'environnement](#variables-denvironnement)
-  - [Options de personnalisation](#options-de-personnalisation)
-- [Dépannage 🛠️](#-dépannage)
-- [Sécurité 🔒](#-sécurité)
-- [Contribution 🤝](#-contribution)
-- [Licence 📄](#-licence)
-- [Création de l'application](#création-de-lapplication)
+Une application légère et efficace pour enregistrer de l'audio et le transcrire en temps réel. Supporte OpenAI (GPT-4o) et Mistral (Voxtral). Parfaite pour les notes vocales, les interviews ou la dictée.
 
 ## ✨ Fonctionnalités
 
 - 🎙️ Enregistrement audio en un clic
 - ⏱️ Affichage du temps d'enregistrement
-- 🚀 Transcription via l'API OpenAI (modèle GPT-4o)
+- 🚀 **Double support transcription** :
+  - OpenAI GPT-4o Transcribe
+  - Mistral Voxtral Mini Transcribe
 - 📋 Copie automatique dans le presse-papier
 - 🎨 Interface utilisateur simple et intuitive
 - ⚡ Fermeture automatique après transcription
+- 📝 **Système de logs** pour le débogage
 
 ## 📋 Prérequis
 
 - Python 3.8 ou supérieur
-- Compte [OpenAI](https://platform.openai.com/) avec clé API valide
-- Système d'exploitation : Ubuntu (testé sur 20.04/22.04)
-  - Pour les environnements de bureau sur Ubuntu, la bibliothèque `libxcb-cursor0` est nécessaire pour l'interface graphique. Installez-la avec : `sudo apt install libxcb-cursor0`
+- Ubuntu (testé sur 20.04/22.04/24.04)
 - Accès à un microphone fonctionnel
-- Connexion Internet (pour l'API OpenAI)
+- Connexion Internet
+
+### Dépendances système
+
+```bash
+sudo apt update
+sudo apt install -y portaudio19-dev python3-dev ffmpeg libxcb-cursor0
+```
 
 ## 🚀 Installation rapide
 
-1. **Cloner le dépôt** :
-   ```bash
-   git clone https://github.com/alexkovax/voice-transcriptor.git
-   cd voice-transcriptor
-   ```
+### 1. Cloner le dépôt
 
-2. **Lancer le script setup.sh pour une installation interactive** :
-   ```bash
-   sh setup.sh
-   ```
+```bash
+git clone https://github.com/alexkovax/voice-transcriptor.git
+cd voice-transcriptor
+```
 
+### 2. Lancer l'installation automatique
 
-## 🚀 Installation manuelle
+```bash
+chmod +x setup.sh
+./setup.sh
+```
 
-1. **Cloner le dépôt** :
-   ```bash
-   git clone https://github.com/alexkovax/voice-transcriptor.git
-   cd voice-transcriptor
-   ```
+Le script va :
+- Créer un environnement virtuel Python
+- Installer toutes les dépendances
+- Vous demander quel provider utiliser (OpenAI ou Mistral)
+- Créer le fichier de configuration `.env`
 
-2. **Créer et activer un environnement virtuel** :
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/macOS
-   # ou
-   .\venv\Scripts\activate  # Windows
-   ```
+### 3. Configuration manuelle (alternative)
 
-3. **Installer les dépendances** :
-   ```bash
-   pip install -r requirements.txt
-   ```
+Si vous préférez configurer manuellement :
 
-   **Note pour les utilisateurs Ubuntu (Bureau) :** Si vous rencontrez des problèmes avec Qt (par exemple, une erreur "xcb platform plugin"), assurez-vous d'avoir installé `libxcb-cursor0`:
-   ```bash
-   sudo apt update
-   sudo apt install libxcb-cursor0
-   ```
+```bash
+# Créer l'environnement virtuel
+python3 -m venv venv
+source venv/bin/activate
 
-4. **Configurer la clé API OpenAI** :
-   ```bash
-   # Pour la session actuelle
-   export OPENAI_API_KEY='votre_cle_api_openai_ici'
-   
-   # Pour le rendre permanent (ajouter à ~/.bashrc ou ~/.bash_profile)
-   echo "export OPENAI_API_KEY='votre_cle_api_openai_ici'" >> ~/.bashrc
-   source ~/.bashrc
-   ```
+# Installer les dépendances
+pip install -r requirements.txt
+
+# Copier et éditer la configuration
+cp .env.example .env
+# Éditez .env avec vos clés API
+```
+
+## ⚙️ Configuration
+
+L'application utilise un fichier `.env` pour la configuration. Exemple :
+
+```bash
+# Choix du provider
+TRANSCRIPTION_PROVIDER=mistral  # ou 'openai'
+
+# Clés API
+OPENAI_API_KEY=sk-votre-cle-openai
+MISTRAL_API_KEY=votre-cle-mistral
+
+# Options audio (optionnel)
+SAMPLE_RATE=44100
+CHANNELS=1
+
+# Options Mistral (optionnel)
+MISTRAL_MODEL=voxtral-mini-latest
+MISTRAL_LANGUAGE=fr
+```
+
+### Obtenir une clé API
+
+- **OpenAI** : https://platform.openai.com/api-keys
+- **Mistral** : https://console.mistral.ai/
 
 ## 🎯 Utilisation
+
+### Lancement rapide
+
+```bash
+./bin/launch-voice-transcriptor.sh
+```
 
 ### Lancement manuel
 
 ```bash
+source venv/bin/activate
 python src/main.py
 ```
 
 ### Configuration du raccourci clavier (Ubuntu)
 
-Pour un accès rapide, configurez un raccourci clavier :
-
-1. **Rendre le script de lancement exécutable** :
-   ```bash
-   chmod +x bin/launch-voice-transcriptor.sh
-   ```
-
-2. **Créer un raccourci clavier personnalisé** :
-   - Ouvrez les Paramètres système (Settings)
-   - Allez dans "Clavier" (Keyboard)
-   - Faites défiler vers le bas et cliquez sur "Raccourcis personnalisés" (Custom Shortcuts)
-   - Cliquez sur le bouton "+" en bas
-   - Remplissez les champs :
-     - Nom : `Voice Transcriber`
-     - Commande : `/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh`
-   - Cliquez sur "Appliquer" (Apply)
-   - Cliquez sur "Désactivé" (Disabled) à droite du nouveau raccourci
-   - Appuyez sur la combinaison de touches de votre choix (par exemple, `Ctrl+Alt+V`)
+1. Ouvrez **Paramètres** → **Clavier** → **Raccourcis personnalisés**
+2. Cliquez sur **+** pour ajouter un raccourci
+3. Remplissez :
+   - **Nom** : Voice Transcriber
+   - **Commande** : `/chemin/complet/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh`
+4. Cliquez sur **Désactivé** et choisissez votre combinaison (ex: `Ctrl+Alt+V`)
 
 ### Utilisation de l'application
 
-1. **Démarrage** :
-   - L'application démarre automatiquement l'enregistrement
-   - Parlez clairement dans votre microphone
+1. **Lancement** : L'enregistrement démarre automatiquement
+2. **Terminer** : Arrête et transcrit l'audio
+3. **Annuler** : Quitte sans transcription
+4. **Résultat** : Le texte est copié dans le presse-papier
 
-2. **Actions disponibles** :
-   - 🟢 **Terminer** : Arrête l'enregistrement et lance la transcription
-   - 🔴 **Annuler** : Annule l'enregistrement et quitte
-
-3. **Après la transcription** :
-   - Le texte est automatiquement copié dans le presse-papier
-   - Un message de confirmation s'affiche
-   - L'application se ferme automatiquement après 1 seconde
-
-### Options supplémentaires
-
-#### Créer un raccourci sur le bureau
-
-```bash
-cat > ~/Desktop/Voice-Transcriber.desktop << 'EOL'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Voice Transcriber
-Comment=Lance l'application de transcription vocale
-Exec=/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh
-Icon=audio-input-microphone
-Terminal=false
-Categories=Audio;Utility;
-EOL
-
-chmod +x ~/Desktop/Voice-Transcriber.desktop
-```
-
-#### Démarrer automatiquement au démarrage
-
-1. Ouvrez "Applications au démarrage" (Startup Applications)
-2. Cliquez sur "Ajouter" (Add)
-3. Remplissez les champs :
-   - Nom : `Voice Transcriber`
-   - Commande : `/chemin/vers/voice-transcriptor/bin/launch-voice-transcriptor.sh`
-   - Commentaire : "Application de transcription vocale"
-4. Cliquez sur "Ajouter" (Add)
-
-## ⚙️ Configuration
-
-### Variables d'environnement
-
-| Variable | Description | Valeur par défaut |
-|----------|-------------|-------------------|
-| `OPENAI_API_KEY` | Votre clé API OpenAI | *Obligatoire* |
-
-### Options avancées
-
-Vous pouvez modifier les paramètres suivants dans le fichier `src/main.py` :
-
-- `sample_rate` : Taux d'échantillonnage audio (par défaut : 44100 Hz)
-- `channels` : Nombre de canaux audio (1 pour mono, 2 pour stéréo)
-- Délai de fermeture après transcription
+Les enregistrements sont sauvegardés dans `~/VoiceRecordings/`
 
 ## 🛠️ Dépannage
 
+### Voir les logs
+
+```bash
+cat ~/VoiceRecordings/voice_transcriptor.log
+```
+
 ### Problèmes courants
 
-1. **Microphone non détecté** :
-   ```bash
-   sudo apt-get install portaudio19-dev python3-dev
-   ```
+**Erreur "Unauthorized" ou "401"**
+- Vérifiez votre clé API dans le fichier `.env`
+- Assurez-vous que la variable `TRANSCRIPTION_PROVIDER` correspond à votre clé
 
-2. **Erreur de clé API manquante** :
-   - Vérifiez que la variable d'environnement est bien définie
-   - Redémarrez votre terminal après l'avoir définie
+**Microphone non détecté**
+```bash
+sudo apt install portaudio19-dev pulseaudio-utils
+```
 
-3. **Erreurs de dépendances** :
-   ```bash
-   pip install --upgrade -r requirements.txt
-   ```
+**Problème d'interface graphique (Qt)**
+```bash
+sudo apt install libxcb-cursor0
+```
 
-4. **Problèmes d'interface graphique** :
-   ```bash
-   sudo apt-get install libxcb-cursor0
-   ```
+**Changer de provider**
 
-## 🤝 Contribution
+Éditez le fichier `.env` :
+```bash
+TRANSCRIPTION_PROVIDER=mistral  # ou openai
+```
 
-Les contributions sont les bienvenues ! Voici comment contribuer :
+## 🏗️ Architecture
 
-1. Forkez le projet
-2. Créez une branche pour votre fonctionnalité (`git checkout -b feature/AmazingFeature`)
-3. Committez vos modifications (`git commit -m 'Ajouter une fonctionnalité incroyable'`)
-4. Poussez vers la branche (`git push origin feature/AmazingFeature`)
-5. Ouvrez une Pull Request
+```
+src/
+├── main.py              # Point d'entrée
+├── config.py            # Configuration (.env)
+├── audio_recorder.py    # Interface graphique
+├── utils.py             # Utilitaires
+└── providers/
+    ├── base.py          # Classe abstraite
+    ├── openai_provider.py
+    └── mistral_provider.py
+```
 
 ## 📄 Licence
 
-Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de détails.
-
-## 🙏 Remerciements
-
-- [OpenAI](https://openai.com/) pour leur API de transcription
-- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) pour l'interface graphique
-- [SoundDevice](https://python-sounddevice.readthedocs.io/) pour la capture audio
+Ce projet est sous licence MIT.
 
 ---
 
 <div align="center">
   Fait avec ❤️ pour une expérience de transcription fluide
 </div>
-## Utilisation
-
-1. Lancez l'application :
-   ```bash
-   python src/main.py
-   ```
-
-2. L'application démarre immédiatement l'enregistrement audio.
-
-3. Utilisez les boutons :
-   - **Terminer** : Arrête l'enregistrement, envoie l'audio à l'API OpenAI et copie la transcription dans le presse-papier
-   - **Annuler** : Annule l'enregistrement et quitte l'application
-
-## Fonctionnalités
-
-- Enregistrement audio en temps réel
-- Interface graphique simple et intuitive
-- Affichage du temps d'enregistrement
-- Transcription via l'API OpenAI
-- Copie automatique de la transcription dans le presse-papier
-
-## Dépannage
-
-### Problèmes d'enregistrement audio
-- Vérifiez que votre microphone est correctement branché et configuré
-- Assurez-vous que l'application a les permissions nécessaires pour accéder au microphone
-
-### Erreurs d'API
-- Vérifiez que votre clé API OpenAI est valide et correctement configurée
-- Assurez-vous d'avoir un accès Internet
-
-## Licence
-
-Ce projet est sous licence MIT.
-
-## Création de l'application
-
-Cette application a été entièrement créée avec l'assistant AI Windsurf. Vous pouvez retrouvez les prompts dans PROMPTS.md
