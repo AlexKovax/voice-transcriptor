@@ -29,8 +29,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from .providers.base import TranscriptionProvider
-from .utils import setup_logging, format_duration, get_recordings_dir
+from providers.base import TranscriptionProvider
+from utils import setup_logging, format_duration, get_recordings_dir
 import pyperclip
 
 

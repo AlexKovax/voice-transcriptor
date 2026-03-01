@@ -5,8 +5,8 @@ Provider de transcription Mistral (Voxtral Mini Transcribe)
 from pathlib import Path
 from typing import Optional
 from mistralai import Mistral
-from .base import TranscriptionProvider
-from ..config import Config
+from providers.base import TranscriptionProvider
+from config import Config
 
 
 class MistralProvider(TranscriptionProvider):

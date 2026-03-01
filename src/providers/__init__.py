@@ -2,11 +2,10 @@
 Factory pour créer les providers de transcription
 """
 
-from typing import Type
-from ..config import Config
-from .base import TranscriptionProvider
-from .openai_provider import OpenAIProvider
-from .mistral_provider import MistralProvider
+from typing import Type, Optional
+from providers.base import TranscriptionProvider
+from providers.openai_provider import OpenAIProvider
+from providers.mistral_provider import MistralProvider
 
 
 # Mapping des providers disponibles
@@ -16,7 +15,7 @@ PROVIDERS = {
 }
 
 
-def create_provider(config: Config = None) -> TranscriptionProvider:
+def create_provider(config: "Config" = None) -> TranscriptionProvider:
     """
     Crée et initialise un provider de transcription selon la configuration
 
@@ -30,7 +29,7 @@ def create_provider(config: Config = None) -> TranscriptionProvider:
         ValueError: Si le provider n'est pas supporté
     """
     if config is None:
-        from ..config import Config
+        from config import Config
 
         config = Config()
 

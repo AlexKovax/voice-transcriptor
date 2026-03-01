@@ -1,0 +1,3 @@
+"""
+Voice Transcriptor - Module source
+"""
