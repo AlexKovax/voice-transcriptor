@@ -1,447 +1,75 @@
+"""
+Voice Transcriptor - Application d'enregistrement et transcription audio
+
+Cette application permet d'enregistrer de l'audio et de le transcrire
+en utilisant différents providers (OpenAI GPT-4o ou Mistral Voxtral).
+
+Configuration via le fichier .env
+"""
+
 import sys
-import os
-import tempfile
-import time
-import json
-import datetime
-import logging
-import sounddevice as sd
-import soundfile as sf
-import numpy as np
-from pathlib import Path
-from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-    QLabel,
-    QMessageBox,
-    QHBoxLayout,
-    QProgressBar,
-    QSizePolicy,
-)
-from PyQt6.QtCore import QTimer, Qt, QSize, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QMovie, QFont
-import openai
-import pyperclip
-from pydub import AudioSegment
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
-
-# Configuration du logging
-def setup_logging():
-    """Configure le logging pour enregistrer les erreurs dans le dossier VoiceRecordings"""
-    recordings_dir = Path.home() / "VoiceRecordings"
-    recordings_dir.mkdir(exist_ok=True)
-
-    log_file = recordings_dir / "voice_transcriptor.log"
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
-
-    return logging.getLogger(__name__)
-
-
-# Initialiser le logger
-logger = setup_logging()
-
-
-class AudioRecorder(QMainWindow):
-    # Définir des signaux personnalisés
-    show_success_signal = pyqtSignal(str)
-    show_error_signal = pyqtSignal(str)
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Enregistreur Vocal")
-        self.setFixedSize(400, 250)  # Augmenté pour accommoder le chemin du fichier
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f5f5f5;
-            }
-            QLabel {
-                color: #333;
-            }
-            #filePathLabel {
-                font-size: 10px;
-                color: #666;
-                background-color: #f0f0f0;
-                padding: 4px;
-                border-radius: 3px;
-                margin-top: 10px;
-            }
-        """)
-
-        # Configuration audio
-        self.sample_rate = 44100
-        self.channels = 1
-        self.recording = False
-        self.audio_frames = []
-        self.start_time = 0
-
-        # Dossier de sauvegarde des enregistrements
-        self.recordings_dir = Path.home() / "VoiceRecordings"
-        self.recordings_dir.mkdir(exist_ok=True)
-
-        # Chemin du fichier d'enregistrement actuel
-        self.current_recording_path = None
-
-        # Configuration de l'interface
-        self.setup_ui()
-
-        # Configuration du timer pour le chronomètre
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_timer)
-
-        # Configuration d'OpenAI (à remplacer par votre clé API)
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        if not openai.api_key:
-            error_msg = "La clé API OpenAI n'a pas été trouvée. Veuillez définir la variable d'environnement OPENAI_API_KEY."
-            logger.error(error_msg)
-            QMessageBox.critical(self, "Erreur", error_msg)
-            sys.exit(1)
-
-        logger.info("Application démarrée avec succès")
-
-    def setup_ui(self):
-        # Widget principal
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(20, 20, 20, 20)
-        self.main_layout.setSpacing(20)
-
-        # Conteneur pour le contenu principal (sera remplacé pendant le chargement)
-        self.content_widget = QWidget()
-        self.main_layout.addWidget(self.content_widget)
-
-        # Layout pour le contenu principal
-        layout = QVBoxLayout(self.content_widget)
-
-        # Affichage du temps
-        self.time_label = QLabel("00:00")
-        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_label.setStyleSheet("font-size: 24px; font-weight: bold;")
-
-        # Conteneur pour les boutons
-        self.button_container = QWidget()
-        button_layout = QHBoxLayout(self.button_container)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(10)
-
-        # Boutons
-        self.finish_btn = QPushButton("Terminer")
-        self.finish_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                padding: 8px 16px;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:disabled {
-                background-color: #a5d6a7;
-            }
-        """)
-        self.finish_btn.clicked.connect(self.finish_recording)
-
-        self.cancel_btn = QPushButton("Annuler")
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                padding: 8px 16px;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:disabled {
-                background-color: #ef9a9a;
-            }
-        """)
-        self.cancel_btn.clicked.connect(self.cancel_recording)
-
-        # Ajout des boutons au layout
-        button_layout.addWidget(self.finish_btn)
-        button_layout.addWidget(self.cancel_btn)
-
-        # Label pour afficher le chemin du fichier
-        self.file_path_label = QLabel()
-        self.file_path_label.setObjectName("filePathLabel")
-        self.file_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.file_path_label.setWordWrap(True)
-        self.file_path_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-
-        # Ajout des widgets au layout principal
-        layout.addWidget(self.time_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.button_container, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.file_path_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Widget de chargement (caché par défaut)
-        self.loading_widget = QWidget()
-        loading_layout = QVBoxLayout(self.loading_widget)
-        loading_layout.setContentsMargins(0, 0, 0, 0)
-        loading_layout.setSpacing(15)
-
-        # Indicateur de chargement
-        self.loading_label = QLabel()
-        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.loading_label.setStyleSheet("font-size: 14px; color: #555;")
-
-        # Barre de progression
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)  # Mode indéterminé
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(4)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: none;
-                background: #e0e0e0;
-                border-radius: 2px;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 2px;
-            }
-        """)
-
-        loading_layout.addWidget(
-            self.loading_label, alignment=Qt.AlignmentFlag.AlignCenter
-        )
-        loading_layout.addWidget(self.progress_bar)
-
-        # Ajouter le widget de chargement au layout principal
-        self.main_layout.addWidget(self.loading_widget)
-        self.loading_widget.hide()
-
-        # Définir le layout principal
-        main_widget.setLayout(self.main_layout)
-
-    def start_recording(self):
-        """Démarre l'enregistrement audio"""
-        self.recording = True
-        self.audio_frames = []
-        self.start_time = time.time()
-
-        # Créer un nom de fichier basé sur la date et l'heure
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.current_recording_path = self.recordings_dir / f"recording_{timestamp}.wav"
-        self.file_path_label.setText(
-            f"Enregistrement en cours : {self.current_recording_path}"
-        )
-
-        logger.info(f"Démarrage de l'enregistrement : {self.current_recording_path}")
-
-        # Démarrer le flux audio
-        self.stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            callback=self.audio_callback,
-        )
-        self.stream.start()
-
-        # Démarrer le timer
-        self.timer.start(100)  # Mise à jour toutes les 100ms
-        self.update_timer()
-
-    def audio_callback(self, indata, frames, time, status):
-        """Callback appelé à chaque nouveau bloc audio"""
-        if self.recording:
-            self.audio_frames.append(indata.copy())
-
-    def update_timer(self):
-        """Met à jour l'affichage du chronomètre"""
-        if self.recording:
-            elapsed = int(time.time() - self.start_time)
-            minutes = elapsed // 60
-            seconds = elapsed % 60
-            self.time_label.setText(f"{minutes:02d}:{seconds:02d}")
-
-    def show_loading(self, message):
-        """Affiche l'écran de chargement avec un message"""
-        self.content_widget.hide()
-        self.loading_label.setText(message)
-        self.loading_label.setStyleSheet("font-size: 14px; color: #555;")
-        self.progress_bar.show()
-        self.loading_widget.show()
-
-    def show_success(self, message, close_delay=1000):
-        """Affiche un message de succès et ferme l'application après un délai"""
-        self.loading_label.setText(message)
-        self.loading_label.setStyleSheet(
-            "color: #4CAF50; font-size: 16px; font-weight: bold;"
-        )
-        self.progress_bar.hide()
-        QTimer.singleShot(close_delay, self.close)
-
-    def finish_recording(self):
-        """Termine l'enregistrement et envoie à l'API OpenAI"""
-        if not self.recording:
-            return
-
-        self.stop_recording()
-
-        # Désactiver les boutons et afficher le chargement
-        self.finish_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
-        self.show_loading("Transcription en cours...")
-
-        # Utiliser un thread séparé pour éviter de bloquer l'interface
-        from threading import Thread
-
-        def process_audio():
-            tmp_wav_file = None
-            tmp_mp3_file = None
-            try:
-                # Sauvegarder dans un fichier temporaire WAV
-                tmp_wav_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                audio_data = np.concatenate(self.audio_frames, axis=0)
-
-                # Sauvegarder dans le fichier temporaire WAV
-                sf.write(tmp_wav_file.name, audio_data, self.sample_rate)
-
-                # Sauvegarder une copie dans le dossier des enregistrements
-                if self.current_recording_path:
-                    try:
-                        sf.write(
-                            str(self.current_recording_path),
-                            audio_data,
-                            self.sample_rate,
-                        )
-                        self.file_path_label.setText(
-                            f"Enregistrement sauvegardé :\n{self.current_recording_path}"
-                        )
-                    except Exception as e:
-                        error_msg = (
-                            f"Erreur lors de la sauvegarde de l'enregistrement : {e}"
-                        )
-                        logger.error(error_msg)
-                        self.file_path_label.setText(
-                            f"Erreur de sauvegarde, vérifiez les permissions :\n{self.recordings_dir}"
-                        )
-
-                # Convertir WAV en MP3 pour réduire la taille
-                tmp_mp3_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                audio = AudioSegment.from_wav(tmp_wav_file.name)
-                audio.export(tmp_mp3_file.name, format="mp3", bitrate="128k")
-
-                # Vérifier la taille du fichier MP3
-                mp3_size_mb = os.path.getsize(tmp_mp3_file.name) / (
-                    1024 * 1024
-                )  # Taille en Mo
-                warning_message = ""
-
-                if mp3_size_mb > 25:
-                    warning_message = f"⚠️ ATTENTION: Le fichier audio fait {mp3_size_mb:.1f} Mo et dépasse la limite de 25 Mo de l'API OpenAI. La transcription pourrait échouer."
-                    logger.warning(warning_message)
-
-                # Envoyer à l'API OpenAI (utiliser le MP3 au lieu du WAV)
-                with open(tmp_mp3_file.name, "rb") as audio_file:
-                    response = openai.audio.transcriptions.create(
-                        model="gpt-4o-transcribe", file=audio_file
-                    )
-
-                # Copier le texte dans le presse-papier
-                transcription = response.text
-                pyperclip.copy(transcription)
-
-                logger.info(f"Transcription réussie : {len(transcription)} caractères")
-
-                # Afficher le message de succès dans le thread principal
-                success_msg = "Transcription terminée !"
-                if warning_message:
-                    success_msg += f"\n{warning_message}"
-                if self.current_recording_path:
-                    success_msg += (
-                        f"\nL'audio est sauvegardé ici :\n{self.current_recording_path}"
-                    )
-                self.show_success_signal.emit(success_msg)
-
-            except Exception as e:
-                error_msg = f"Erreur lors de la transcription : {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                if self.current_recording_path:
-                    error_msg += f"\n\nL'enregistrement audio a été sauvegardé ici :\n{self.current_recording_path}"
-                self.show_error_signal.emit(error_msg)
-            finally:
-                # Nettoyer les fichiers temporaires
-                for temp_file in [tmp_wav_file, tmp_mp3_file]:
-                    if temp_file and os.path.exists(temp_file.name):
-                        try:
-                            os.unlink(temp_file.name)
-                        except Exception as e:
-                            logger.error(
-                                f"Erreur lors de la suppression du fichier temporaire : {e}"
-                            )
-
-        # Démarrer le traitement dans un thread séparé
-        self.worker_thread = Thread(target=process_audio, daemon=True)
-        self.worker_thread.start()
-
-        # Connecter les signaux si ce n'est pas déjà fait
-        if not hasattr(self, "_signals_connected"):
-            self.show_success_signal.connect(self.show_success)
-            self.show_error_signal.connect(self.show_error)
-            self._signals_connected = True
-
-    def show_error(self, error_message):
-        """Affiche un message d'erreur et ferme l'application"""
-        self.loading_label.setText(error_message)
-        self.loading_label.setStyleSheet(
-            "color: #f44336; font-size: 16px; font-weight: bold;"
-        )
-        self.progress_bar.hide()
-        QTimer.singleShot(1000, self.close)
-
-    def cancel_recording(self):
-        """Annule l'enregistrement et quitte l'application"""
-        if self.recording:
-            self.stop_recording()
-        self.close()
-
-    def stop_recording(self):
-        """Arrête l'enregistrement audio"""
-        if hasattr(self, "stream") and self.stream.active:
-            self.stream.stop()
-            self.stream.close()
-        self.recording = False
-        self.timer.stop()
-
-    def closeEvent(self, event):
-        """Gère la fermeture de la fenêtre"""
-        self.stop_recording()
-        event.accept()
+from config import Config
+from providers import create_provider
+from audio_recorder import AudioRecorder
+from utils import setup_logging
 
 
 def main():
-    app = QApplication(sys.argv)
+    """Point d'entrée principal de l'application"""
 
-    # Vérifier si une clé API est définie
-    if not os.getenv("OPENAI_API_KEY"):
-        error_msg = "Variable d'environnement OPENAI_API_KEY non définie"
-        logger.error(error_msg)
+    # Initialiser le logging
+    logger = setup_logging()
+    logger.info("=" * 50)
+    logger.info("Démarrage de Voice Transcriptor")
+
+    # Valider la configuration
+    is_valid, error_message = Config.validate()
+    if not is_valid:
+        logger.error(f"Configuration invalide: {error_message}")
+
+        # Afficher l'erreur dans une boîte de dialogue
+        app = QApplication(sys.argv)
         QMessageBox.critical(
             None,
             "Erreur de configuration",
-            "Veuillez définir la variable d'environnement OPENAI_API_KEY avec votre clé API OpenAI.",
+            f"{error_message}\n\n"
+            "Veuillez créer un fichier .env à partir de .env.example\n"
+            "et configurer vos clés API.",
         )
         sys.exit(1)
 
-    # Démarrer l'application
-    recorder = AudioRecorder()
-    recorder.show()
-    recorder.start_recording()  # Démarrer l'enregistrement immédiatement
+    logger.info(f"Provider sélectionné: {Config.TRANSCRIPTION_PROVIDER}")
+    logger.info(f"Sample rate: {Config.SAMPLE_RATE} Hz")
+    logger.info(f"Channels: {Config.CHANNELS}")
 
-    sys.exit(app.exec())
+    try:
+        # Créer le provider de transcription
+        provider = create_provider()
+        logger.info(f"Provider initialisé: {provider.name}")
+
+        # Créer l'application Qt
+        app = QApplication(sys.argv)
+
+        # Créer et afficher l'enregistreur
+        recorder = AudioRecorder(
+            provider=provider, sample_rate=Config.SAMPLE_RATE, channels=Config.CHANNELS
+        )
+        recorder.show()
+        recorder.start_recording()
+
+        logger.info("Application prête - démarrage de l'enregistrement")
+
+        # Lancer la boucle principale
+        sys.exit(app.exec())
+
+    except Exception as e:
+        logger.error(f"Erreur fatale: {e}", exc_info=True)
+
+        app = QApplication(sys.argv)
+        QMessageBox.critical(None, "Erreur", f"Une erreur est survenue:\n{str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
