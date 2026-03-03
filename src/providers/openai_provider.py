@@ -2,9 +2,15 @@
 Provider de transcription OpenAI (GPT-4o Transcribe)
 """
 
+import logging
 from pathlib import Path
+
 import openai
+
 from .base import TranscriptionProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(TranscriptionProvider):
@@ -15,11 +21,16 @@ class OpenAIProvider(TranscriptionProvider):
 
     def __init__(self, api_key: str):
         super().__init__(api_key)
+        self.initialize()
 
     def initialize(self) -> None:
         """Initialise le client OpenAI"""
         openai.api_key = self.api_key
         self.client = openai
+
+    @classmethod
+    def from_config(cls, config) -> "OpenAIProvider":
+        return cls(api_key=config.OPENAI_API_KEY)
 
     def transcribe(self, audio_file_path: Path) -> str:
         """
@@ -31,11 +42,9 @@ class OpenAIProvider(TranscriptionProvider):
         Returns:
             Texte transcrit
         """
-        # Vérifier la taille du fichier
         is_valid, warning = self.check_file_size(audio_file_path, self.MAX_FILE_SIZE_MB)
         if not is_valid:
-            # On continue mais on log l'avertissement
-            print(warning)
+            logger.warning(warning)
 
         with open(audio_file_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(

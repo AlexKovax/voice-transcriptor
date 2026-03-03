@@ -2,10 +2,9 @@
 Factory pour créer les providers de transcription
 """
 
-from typing import Type, Optional
-from providers.base import TranscriptionProvider
-from providers.openai_provider import OpenAIProvider
-from providers.mistral_provider import MistralProvider
+from .base import TranscriptionProvider
+from .openai_provider import OpenAIProvider
+from .mistral_provider import MistralProvider
 
 
 # Mapping des providers disponibles
@@ -15,7 +14,7 @@ PROVIDERS = {
 }
 
 
-def create_provider(config: "Config" = None) -> TranscriptionProvider:
+def create_provider(config=None) -> TranscriptionProvider:
     """
     Crée et initialise un provider de transcription selon la configuration
 
@@ -30,8 +29,7 @@ def create_provider(config: "Config" = None) -> TranscriptionProvider:
     """
     if config is None:
         from config import Config
-
-        config = Config()
+        config = Config
 
     provider_name = config.TRANSCRIPTION_PROVIDER
 
@@ -41,25 +39,7 @@ def create_provider(config: "Config" = None) -> TranscriptionProvider:
             f"Providers disponibles: {', '.join(PROVIDERS.keys())}"
         )
 
-    provider_class = PROVIDERS[provider_name]
-
-    # Créer le provider avec les bons paramètres
-    if provider_name == "openai":
-        provider = provider_class(api_key=config.OPENAI_API_KEY)
-    elif provider_name == "mistral":
-        provider = provider_class(
-            api_key=config.MISTRAL_API_KEY,
-            model=config.MISTRAL_MODEL,
-            language=config.MISTRAL_LANGUAGE,
-            context_bias=config.MISTRAL_CONTEXT_BIAS,
-        )
-    else:
-        raise ValueError(f"Provider non supporté: {provider_name}")
-
-    # Initialiser le client
-    provider.initialize()
-
-    return provider
+    return PROVIDERS[provider_name].from_config(config)
 
 
 def get_available_providers() -> list[str]:

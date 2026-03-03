@@ -2,7 +2,6 @@
 Interface graphique pour l'enregistreur audio
 """
 
-import sys
 import os
 import tempfile
 import time
@@ -30,11 +29,12 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from providers.base import TranscriptionProvider
-from utils import setup_logging, format_duration, get_recordings_dir
+from utils import format_duration, get_recordings_dir
 import pyperclip
+import logging
 
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class AudioRecorder(QMainWindow):

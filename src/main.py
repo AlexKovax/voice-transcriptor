@@ -24,6 +24,9 @@ from utils import setup_logging
 def main():
     """Point d'entrée principal de l'application"""
 
+    # Créer l'application Qt en premier (une seule instance)
+    app = QApplication(sys.argv)
+
     # Initialiser le logging
     logger = setup_logging()
     logger.info("=" * 50)
@@ -33,9 +36,6 @@ def main():
     is_valid, error_message = Config.validate()
     if not is_valid:
         logger.error(f"Configuration invalide: {error_message}")
-
-        # Afficher l'erreur dans une boîte de dialogue
-        app = QApplication(sys.argv)
         QMessageBox.critical(
             None,
             "Erreur de configuration",
@@ -54,9 +54,6 @@ def main():
         provider = create_provider()
         logger.info(f"Provider initialisé: {provider.name}")
 
-        # Créer l'application Qt
-        app = QApplication(sys.argv)
-
         # Créer et afficher l'enregistreur
         recorder = AudioRecorder(
             provider=provider, sample_rate=Config.SAMPLE_RATE, channels=Config.CHANNELS
@@ -71,8 +68,6 @@ def main():
 
     except Exception as e:
         logger.error(f"Erreur fatale: {e}", exc_info=True)
-
-        app = QApplication(sys.argv)
         QMessageBox.critical(None, "Erreur", f"Une erreur est survenue:\n{str(e)}")
         sys.exit(1)
 

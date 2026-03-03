@@ -2,11 +2,16 @@
 Provider de transcription Mistral (Voxtral Mini Transcribe)
 """
 
+import logging
 from pathlib import Path
 from typing import Optional
+
 from mistralai import Mistral
-from providers.base import TranscriptionProvider
-from config import Config
+
+from .base import TranscriptionProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 class MistralProvider(TranscriptionProvider):
@@ -25,10 +30,20 @@ class MistralProvider(TranscriptionProvider):
         self.model = model
         self.language = language
         self.context_bias = context_bias
+        self.initialize()
 
     def initialize(self) -> None:
         """Initialise le client Mistral"""
         self.client = Mistral(api_key=self.api_key)
+
+    @classmethod
+    def from_config(cls, config) -> "MistralProvider":
+        return cls(
+            api_key=config.MISTRAL_API_KEY,
+            model=config.MISTRAL_MODEL,
+            language=config.MISTRAL_LANGUAGE,
+            context_bias=config.MISTRAL_CONTEXT_BIAS,
+        )
 
     def transcribe(self, audio_file_path: Path) -> str:
         """
@@ -40,34 +55,26 @@ class MistralProvider(TranscriptionProvider):
         Returns:
             Texte transcrit
         """
-        # Vérifier la taille du fichier
         is_valid, warning = self.check_file_size(audio_file_path, self.MAX_FILE_SIZE_MB)
         if not is_valid:
-            print(warning)
+            logger.warning(warning)
 
-        # Préparer les paramètres de la requête
         request_params = {
             "model": self.model,
-            "file": {
-                "content": open(audio_file_path, "rb"),
-                "file_name": audio_file_path.name,
-            },
         }
-
-        # Ajouter la langue si spécifiée
         if self.language:
             request_params["language"] = self.language
-
-        # Ajouter le context biasing si spécifié
         if self.context_bias:
             request_params["context_bias"] = self.context_bias
 
-        try:
+        with open(audio_file_path, "rb") as audio_file:
+            request_params["file"] = {
+                "content": audio_file,
+                "file_name": audio_file_path.name,
+            }
             response = self.client.audio.transcriptions.complete(**request_params)
-            return response.text
-        finally:
-            # Fermer le fichier
-            request_params["file"]["content"].close()
+
+        return response.text
 
     @property
     def name(self) -> str:
