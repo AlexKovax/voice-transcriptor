@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from mistralai.client import Mistral
+from mistralai import Mistral
 
 from .base import TranscriptionProvider
 
