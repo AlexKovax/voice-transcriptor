@@ -7,6 +7,7 @@ en utilisant différents providers (OpenAI GPT-4o ou Mistral Voxtral).
 Configuration via le fichier .env
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -48,6 +49,18 @@ def main():
     logger.info(f"Provider sélectionné: {Config.TRANSCRIPTION_PROVIDER}")
     logger.info(f"Sample rate: {Config.SAMPLE_RATE} Hz")
     logger.info(f"Channels: {Config.CHANNELS}")
+    if Config.MAX_RECORDING_SECONDS:
+        logger.info(
+            f"Durée max d'enregistrement: {Config.MAX_RECORDING_SECONDS} s"
+        )
+
+    # Avertir tôt si ffmpeg est absent : la conversion MP3 sera impossible
+    # (le WAV sera envoyé directement, avec des fichiers plus volumineux)
+    if shutil.which("ffmpeg") is None:
+        logger.warning(
+            "ffmpeg introuvable: la conversion MP3 sera ignorée et le fichier "
+            "WAV sera envoyé directement. Installez-le avec: sudo apt install ffmpeg"
+        )
 
     try:
         # Créer le provider de transcription
@@ -56,7 +69,10 @@ def main():
 
         # Créer et afficher l'enregistreur
         recorder = AudioRecorder(
-            provider=provider, sample_rate=Config.SAMPLE_RATE, channels=Config.CHANNELS
+            provider=provider,
+            sample_rate=Config.SAMPLE_RATE,
+            channels=Config.CHANNELS,
+            max_recording_seconds=Config.MAX_RECORDING_SECONDS,
         )
         recorder.show()
         recorder.start_recording()

@@ -11,6 +11,7 @@ import sounddevice as sd
 import soundfile as sf
 from pathlib import Path
 from threading import Thread
+from typing import Optional
 from pydub import AudioSegment
 
 from PyQt6.QtWidgets import (
@@ -29,7 +30,7 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from providers.base import TranscriptionProvider
-from utils import format_duration, get_recordings_dir
+from utils import format_duration, get_recordings_dir, get_unique_path
 import pyperclip
 import logging
 
@@ -49,20 +50,23 @@ class AudioRecorder(QMainWindow):
         provider: TranscriptionProvider,
         sample_rate: int = 44100,
         channels: int = 1,
+        max_recording_seconds: int = 0,
     ):
         super().__init__()
 
         self.provider = provider
         self.sample_rate = sample_rate
         self.channels = channels
+        self.max_recording_seconds = max_recording_seconds  # 0 = illimité
 
         # État de l'enregistrement
         self.recording = False
         self.audio_frames = []
         self.start_time = 0
-        self.current_recording_path: Path = None
+        self.current_recording_path: Optional[Path] = None
         self.stream = None
         self.worker_thread: Thread = None
+        self.cancel_requested = False
 
         # Configuration de l'interface
         self._setup_window()
@@ -230,6 +234,31 @@ class AudioRecorder(QMainWindow):
         )
         loading_layout.addWidget(self.progress_bar)
 
+        # Bouton d'annulation, utilisable pendant la transcription
+        self.loading_cancel_btn = QPushButton("Annuler")
+        self.loading_cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                padding: 8px 18px;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #da190b;
+            }
+            QPushButton:disabled {
+                background-color: #ef9a9a;
+            }
+        """)
+        self.loading_cancel_btn.clicked.connect(self._on_loading_cancel)
+        loading_layout.addWidget(
+            self.loading_cancel_btn, alignment=Qt.AlignmentFlag.AlignCenter
+        )
+        self.loading_cancel_btn.hide()
+
         self.main_layout.addWidget(self.loading_widget)
         self.loading_widget.hide()
 
@@ -248,7 +277,10 @@ class AudioRecorder(QMainWindow):
             # Créer un nom de fichier
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             recordings_dir = get_recordings_dir()
-            self.current_recording_path = recordings_dir / f"recording_{timestamp}.wav"
+            # Nom de fichier unique (évite les collisions à la seconde près)
+            self.current_recording_path = get_unique_path(
+                recordings_dir / f"recording_{timestamp}.wav"
+            )
             self.file_path_label.setText(
                 f"Enregistrement en cours...\n{self.current_recording_path.name}"
             )
@@ -276,6 +308,9 @@ class AudioRecorder(QMainWindow):
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback appelé à chaque bloc audio"""
+        if status:
+            # Signale des pertes potentielles (overflow du flux audio, etc.)
+            logger.warning("Statut du flux audio: %s", status)
         if self.recording:
             self.audio_frames.append(indata.copy())
 
@@ -284,6 +319,15 @@ class AudioRecorder(QMainWindow):
         if self.recording:
             elapsed = int(time.time() - self.start_time)
             self.time_label.setText(format_duration(elapsed))
+
+            # Arrêt automatique à la durée maximale (protection mémoire/API)
+            if self.max_recording_seconds and elapsed >= self.max_recording_seconds:
+                logger.warning(
+                    "Durée maximale d'enregistrement atteinte (%d s), "
+                    "arrêt automatique",
+                    self.max_recording_seconds,
+                )
+                self.finish_recording()
 
     def stop_recording(self):
         """Arrête l'enregistrement audio"""
@@ -300,6 +344,7 @@ class AudioRecorder(QMainWindow):
             return
 
         self.stop_recording()
+        self.cancel_requested = False
 
         # Désactiver les boutons et afficher le chargement
         self.finish_btn.setEnabled(False)
@@ -314,8 +359,18 @@ class AudioRecorder(QMainWindow):
         """Traite l'audio et lance la transcription (dans un thread séparé)"""
         tmp_wav_file = None
         tmp_mp3_file = None
+        transcription_path: Optional[Path] = None
 
         try:
+            # Vérifier qu'on a bien capturé de l'audio
+            if not self.audio_frames:
+                logger.warning("Transcription demandée sans données audio")
+                self.show_error_signal.emit(
+                    "✗ Enregistrement vide\n\nAucun son n'a été capturé.\n"
+                    "Vérifiez votre microphone et réessayez."
+                )
+                return
+
             # Concaténer les frames audio
             audio_data = np.concatenate(self.audio_frames, axis=0)
 
@@ -333,30 +388,73 @@ class AudioRecorder(QMainWindow):
                 except Exception as e:
                     logger.error(f"Erreur de sauvegarde: {e}")
 
-            # Convertir en MP3 pour la transcription
-            tmp_mp3_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-            audio = AudioSegment.from_wav(tmp_wav_file.name)
-            audio.export(tmp_mp3_file.name, format="mp3", bitrate="128k")
+            # Convertir en MP3 pour la transcription (fichier plus léger).
+            # Si la conversion échoue (ffmpeg absent...), envoyer le WAV tel quel.
+            transcription_file = Path(tmp_wav_file.name)
+            try:
+                tmp_mp3_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                audio = AudioSegment.from_wav(tmp_wav_file.name)
+                audio.export(tmp_mp3_file.name, format="mp3", bitrate="128k")
+                transcription_file = Path(tmp_mp3_file.name)
+            except Exception as e:
+                logger.warning(
+                    f"Conversion MP3 impossible ({e}), envoi du WAV directement"
+                )
+                if tmp_mp3_file and os.path.exists(tmp_mp3_file.name):
+                    try:
+                        os.unlink(tmp_mp3_file.name)
+                    except OSError as cleanup_err:
+                        logger.error(f"Erreur suppression fichier temporaire: {cleanup_err}")
+                    tmp_mp3_file = None
 
             # Vérifier la taille du fichier
-            mp3_path = Path(tmp_mp3_file.name)
-            is_valid, warning = self.provider.check_file_size(mp3_path)
+            is_valid, warning = self.provider.check_file_size(transcription_file)
             if not is_valid:
                 logger.warning(warning)
 
-            # Transcrire avec le provider
+            # Transcrire avec le provider (retries + chunking gérés par le provider)
             logger.info(f"Démarrage de la transcription avec {self.provider.name}")
-            transcription = self.provider.transcribe(mp3_path)
+            transcription = self.provider.transcribe(transcription_file)
 
-            # Copier dans le presse-papier
-            pyperclip.copy(transcription)
+            # L'utilisateur a annulé pendant la transcription :
+            # ne rien afficher, l'audio reste sauvegardé
+            if self.cancel_requested:
+                logger.info("Transcription annulée par l'utilisateur (audio conservé)")
+                return
+
+            # Sauvegarder la transcription dans un fichier texte
+            # (source de vérité, indépendamment du presse-papier)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            transcription_path = get_unique_path(
+                get_recordings_dir() / f"transcription_{timestamp}.txt"
+            )
+            try:
+                transcription_path.write_text(transcription, encoding="utf-8")
+            except Exception as e:
+                logger.error(f"Erreur de sauvegarde de la transcription: {e}")
+                transcription_path = None
+
+            # Copier dans le presse-papier (best-effort : peut échouer sous
+            # Wayland sans wl-clipboard, ou sans serveur X)
+            clipboard_ok = True
+            try:
+                pyperclip.copy(transcription)
+            except Exception as e:
+                clipboard_ok = False
+                logger.error(f"Copie dans le presse-papier impossible: {e}")
 
             # Préparer le message de succès
             success_msg = "✓ Transcription terminée !"
             if not is_valid:
                 success_msg += f"\n{warning}"
-            success_msg += f"\n\nTexte copié dans le presse-papier"
+            if clipboard_ok:
+                success_msg += "\n\nTexte copié dans le presse-papier"
+            else:
+                success_msg += "\n\n⚠ Copie dans le presse-papier impossible"
             success_msg += f"\n({len(transcription)} caractères)"
+
+            if transcription_path:
+                success_msg += f"\n\nTexte sauvegardé:\n{transcription_path}"
 
             if self.current_recording_path:
                 success_msg += f"\n\nAudio sauvegardé:\n{self.current_recording_path}"
@@ -372,7 +470,9 @@ class AudioRecorder(QMainWindow):
                 )
 
             logger.error(f"Erreur de transcription: {e}", exc_info=True)
-            self.show_error_signal.emit(error_msg)
+            # Ne pas afficher d'erreur si l'utilisateur a annulé entre-temps
+            if not self.cancel_requested:
+                self.show_error_signal.emit(error_msg)
 
         finally:
             # Nettoyer les fichiers temporaires
@@ -389,24 +489,41 @@ class AudioRecorder(QMainWindow):
         self.loading_label.setText(message)
         self.loading_label.setStyleSheet("font-size: 14px; color: #555;")
         self.progress_bar.show()
+        self.loading_cancel_btn.setEnabled(True)
+        self.loading_cancel_btn.show()
         self.loading_widget.show()
+
+    def _on_loading_cancel(self):
+        """Annule depuis l'écran de chargement (pendant la transcription)"""
+        if self.recording:
+            self.cancel_recording()
+            return
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.cancel_requested = True
+            self.loading_cancel_btn.setEnabled(False)
+            self.loading_label.setText("Annulation en cours...")
+            logger.info("Annulation de la transcription demandée par l'utilisateur")
 
     def _show_success_message(self, message: str):
         """Affiche un message de succès"""
+        self.cancel_requested = False
         self.loading_label.setText(message)
         self.loading_label.setStyleSheet(
             "color: #4CAF50; font-size: 14px; font-weight: bold;"
         )
         self.progress_bar.hide()
+        self.loading_cancel_btn.hide()
         QTimer.singleShot(2000, self.close)  # Fermer après 2 secondes
 
     def _show_error_message(self, message: str):
         """Affiche un message d'erreur"""
+        self.cancel_requested = False
         self.loading_label.setText(message)
         self.loading_label.setStyleSheet(
             "color: #f44336; font-size: 14px; font-weight: bold;"
         )
         self.progress_bar.hide()
+        self.loading_cancel_btn.hide()
         QTimer.singleShot(3000, self.close)  # Fermer après 3 secondes
 
     def cancel_recording(self):
@@ -418,6 +535,10 @@ class AudioRecorder(QMainWindow):
 
     def closeEvent(self, a0):
         """Gère la fermeture de la fenêtre"""
+        # Si une transcription est en cours, demander son annulation
+        # pour éviter d'émettre des signaux vers une fenêtre détruite
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.cancel_requested = True
         self.stop_recording()
         logger.info("Application fermée")
         a0.accept()

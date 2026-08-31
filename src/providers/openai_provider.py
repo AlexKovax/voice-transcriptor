@@ -5,7 +5,7 @@ Provider de transcription OpenAI (GPT-4o Transcribe)
 import logging
 from pathlib import Path
 
-import openai
+from openai import OpenAI
 
 from .base import TranscriptionProvider
 
@@ -19,20 +19,29 @@ class OpenAIProvider(TranscriptionProvider):
     MODEL = "gpt-4o-transcribe"
     MAX_FILE_SIZE_MB = 25.0
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, timeout: float = 120.0):
         super().__init__(api_key)
+        self.timeout = timeout
         self.initialize()
 
     def initialize(self) -> None:
-        """Initialise le client OpenAI"""
-        openai.api_key = self.api_key
-        self.client = openai
+        """
+        Initialise le client OpenAI.
+
+        max_retries=0 : les retries sont gérés de manière uniforme dans
+        TranscriptionProvider.transcribe() (backoff commun aux providers).
+        """
+        self.client = OpenAI(
+            api_key=self.api_key, timeout=self.timeout, max_retries=0
+        )
 
     @classmethod
     def from_config(cls, config) -> "OpenAIProvider":
-        return cls(api_key=config.OPENAI_API_KEY)
+        return cls(
+            api_key=config.OPENAI_API_KEY, timeout=config.TRANSCRIPTION_TIMEOUT
+        )
 
-    def transcribe(self, audio_file_path: Path) -> str:
+    def _transcribe(self, audio_file_path: Path) -> str:
         """
         Transcrit un fichier audio avec OpenAI
 
@@ -42,10 +51,6 @@ class OpenAIProvider(TranscriptionProvider):
         Returns:
             Texte transcrit
         """
-        is_valid, warning = self.check_file_size(audio_file_path, self.MAX_FILE_SIZE_MB)
-        if not is_valid:
-            logger.warning(warning)
-
         with open(audio_file_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(
                 model=self.MODEL, file=audio_file

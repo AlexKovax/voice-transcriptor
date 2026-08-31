@@ -3,6 +3,7 @@ Utilitaires pour l'application Voice Transcriptor
 """
 
 import sys
+import time
 import logging
 from pathlib import Path
 from typing import Optional
@@ -49,3 +50,19 @@ def get_recordings_dir() -> Path:
     recordings_dir = Path.home() / "VoiceRecordings"
     recordings_dir.mkdir(exist_ok=True)
     return recordings_dir
+
+
+def get_unique_path(path: Path) -> Path:
+    """
+    Retourne un chemin de fichier unique : si le fichier existe déjà
+    (deux enregistrements dans la même seconde, par exemple), ajoute
+    un suffixe _1, _2... avant l'extension.
+    """
+    if not path.exists():
+        return path
+    for i in range(1, 1000):
+        candidate = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    # Filet de sécurité quasi impossible à atteindre
+    return path.with_name(f"{path.stem}_{int(time.time())}{path.suffix}")

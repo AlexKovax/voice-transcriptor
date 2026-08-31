@@ -25,16 +25,18 @@ class MistralProvider(TranscriptionProvider):
         model: str = "voxtral-mini-latest",
         language: Optional[str] = None,
         context_bias: Optional[str] = None,
+        timeout: float = 120.0,
     ):
         super().__init__(api_key)
         self.model = model
         self.language = language
         self.context_bias = context_bias
+        self.timeout = timeout
         self.initialize()
 
     def initialize(self) -> None:
-        """Initialise le client Mistral"""
-        self.client = Mistral(api_key=self.api_key)
+        """Initialise le client Mistral (timeout en millisecondes côté SDK)"""
+        self.client = Mistral(api_key=self.api_key, timeout_ms=int(self.timeout * 1000))
 
     @classmethod
     def from_config(cls, config) -> "MistralProvider":
@@ -43,9 +45,10 @@ class MistralProvider(TranscriptionProvider):
             model=config.MISTRAL_MODEL,
             language=config.MISTRAL_LANGUAGE,
             context_bias=config.MISTRAL_CONTEXT_BIAS,
+            timeout=config.TRANSCRIPTION_TIMEOUT,
         )
 
-    def transcribe(self, audio_file_path: Path) -> str:
+    def _transcribe(self, audio_file_path: Path) -> str:
         """
         Transcrit un fichier audio avec Mistral Voxtral
 
@@ -55,10 +58,6 @@ class MistralProvider(TranscriptionProvider):
         Returns:
             Texte transcrit
         """
-        is_valid, warning = self.check_file_size(audio_file_path, self.MAX_FILE_SIZE_MB)
-        if not is_valid:
-            logger.warning(warning)
-
         request_params = {
             "model": self.model,
         }
